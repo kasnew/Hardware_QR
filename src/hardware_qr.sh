@@ -501,9 +501,8 @@ echo ""
 echo "Press Enter to generate QR Code..."
 read dummy
 
-# Smaller QR: gzip v1 payload, wrap as V/1|Z/base64
-qr_b64=$(printf '%s' "$output" | gzip -9c | base64 | tr -d '\n')
-qr_payload="V/1|Z/${qr_b64}"
+# Raw payload: no compression since resolution is increased
+qr_payload="V/1|${output}"
 
 qr_png_width() {
     file -b "$1" 2>/dev/null | sed -n 's/.*, \([0-9][0-9]*\) x [0-9][0-9]*.*/\1/p'
