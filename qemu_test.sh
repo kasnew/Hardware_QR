@@ -31,7 +31,7 @@ echo "========================================================="
 echo ""
 
 # Читаємо параметри з нашого конфігу або використовуємо ті ж, що ми щойно додали
-APPEND_ARGS="modules=loop,squashfs,sd-mod,usb-storage,nvme,vfat video=1920x1080@60,1366x768@60,1280x1024@60,1024x768@60 modprobe.blacklist=floppy usbdelay=1 edd=off nopnp"
+APPEND_ARGS="modules=loop,squashfs,sd-mod,usb-storage,nvme,vfat nomodeset video=1024x768@60 modprobe.blacklist=floppy usbdelay=1 edd=off nopnp"
 
 # Перевіряємо чи підтримує хост KVM для швидшої роботи QEMU
 if [ -e /dev/kvm ]; then

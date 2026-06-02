@@ -305,6 +305,7 @@ qr_enc() {
 }
 
 output=""
+base_output=""
 qr_add() {
     _tag=$(qr_enc "$1")
     shift
@@ -319,31 +320,72 @@ qr_add() {
     fi
 }
 
-qr_add V 1
-qr_add T "$ticket"
-qr_add DT "$scan_dt"
-qr_add C "$cpu"
+qr_add_base() {
+    _tag=$(qr_enc "$1")
+    shift
+    _seg="$_tag"
+    for _v in "$@"; do
+        _seg="${_seg}/$(qr_enc "$_v")"
+    done
+    if [ -z "$base_output" ]; then
+        base_output="$_seg"
+    else
+        base_output="${base_output}|${_seg}"
+    fi
+}
+
+qr_append_base_segment() {
+    _seg="$1"
+    [ -n "$_seg" ] || return
+    if [ -z "$base_output" ]; then
+        base_output="$_seg"
+    else
+        base_output="${base_output}|${_seg}"
+    fi
+}
+
+build_qr_payload() {
+    output=""
+    qr_add V 1
+    qr_add T "$ticket"
+    if [ -n "$base_output" ]; then
+        output="${output}|${base_output}"
+    fi
+
+    qr_b64=$(printf '%s' "$output" | gzip -9c 2>/dev/null | base64 2>/dev/null | tr -d '\n')
+    qr_wrapped="V/1|Z/${qr_b64}"
+    if [ -n "$qr_b64" ] && [ "${#qr_wrapped}" -lt "${#output}" ]; then
+        qr_payload="$qr_wrapped"
+        qr_payload_mode="gzip+base64"
+    else
+        qr_payload="$output"
+        qr_payload_mode="raw"
+    fi
+}
+
+qr_add_base DT "$scan_dt"
+qr_add_base C "$cpu"
 cpu_cores=${cpu_ct%/*}
 cpu_threads=${cpu_ct#*/}
-qr_add CT "$cpu_cores" "$cpu_threads"
-qr_add R "$ram"
-qr_add SM "$sys_manufacturer"
-qr_add PN "$product_name"
-qr_add SS "$system_serial"
-qr_add UUID "$system_uuid"
-qr_add AT "$asset_tag"
-qr_add M "$mb_vendor_model"
-qr_add MS "$mb_serial"
-qr_add B "$bios"
-qr_add BD "$bios_date"
-qr_add BF "$bios_full"
-qr_add TPM "$tpm_status"
+qr_add_base CT "$cpu_cores" "$cpu_threads"
+qr_add_base R "$ram"
+qr_add_base SM "$sys_manufacturer"
+qr_add_base PN "$product_name"
+qr_add_base SS "$system_serial"
+qr_add_base UUID "$system_uuid"
+qr_add_base AT "$asset_tag"
+qr_add_base M "$mb_vendor_model"
+qr_add_base MS "$mb_serial"
+qr_add_base B "$bios"
+qr_add_base BD "$bios_date"
+qr_add_base BF "$bios_full"
+qr_add_base TPM "$tpm_status"
 
 if [ -n "$ram_modules" ]; then
     _ifs=$IFS
     IFS='|'
     for _rm in $ram_modules; do
-        [ -n "$_rm" ] && output="${output}|${_rm}"
+        qr_append_base_segment "$_rm"
     done
     IFS=$_ifs
 fi
@@ -351,7 +393,7 @@ fi
 if [ -n "$gpus" ]; then
     while IFS= read -r _gpu; do
         [ -n "$_gpu" ] || continue
-        qr_add G "$_gpu"
+        qr_add_base G "$_gpu"
     done <<EOF
 $gpus
 EOF
@@ -380,7 +422,7 @@ for ps in /sys/class/power_supply/*; do
     [ -n "$bat_serial" ] || bat_serial="unk"
     [ -n "$bat_cycles" ] || bat_cycles="unk"
 
-    qr_add BAT "$bat_name" "$bat_status" "$bat_capacity" "$bat_health" \
+    qr_add_base BAT "$bat_name" "$bat_status" "$bat_capacity" "$bat_health" \
         "$bat_manufacturer" "$bat_model" "$bat_serial" "$bat_cycles"
     _battery_count=$((_battery_count + 1))
 done
@@ -456,10 +498,11 @@ for name in $(lsblk -d -n -o NAME,TYPE 2>/dev/null | awk '$2 == "disk" { print $
     else media="unk"; fi
 
     smart=$(disk_smart_health "$name")
-    qr_add D "$model" "$serial" "$size" "$tran" "$media" "$smart"
+    qr_add_base D "$model" "$serial" "$size" "$tran" "$media" "$smart"
     _disk_i=$((_disk_i + 1))
 done
 disk_count=$_disk_i
+build_qr_payload
 
 clear
 echo "--- Hardware Data Collected ---"
@@ -501,9 +544,6 @@ echo ""
 echo "Press Enter to generate QR Code..."
 read dummy
 
-# Raw payload: no compression since resolution is increased
-qr_payload="V/1|${output}"
-
 qr_png_width() {
     file -b "$1" 2>/dev/null | sed -n 's/.*, \([0-9][0-9]*\) x [0-9][0-9]*.*/\1/p'
 }
@@ -512,27 +552,115 @@ qr_fb_size() {
     _fw=1024
     _fh=768
     if [ -r /sys/class/graphics/fb0/virtual_size ]; then
-        read _fw _fh < /sys/class/graphics/fb0/virtual_size 2>/dev/null
+        _fb_virtual=$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null | tr ',x' '  ')
+        set -- $_fb_virtual
+        _fw=$1
+        _fh=$2
     fi
-    [ -z "$_fw" ] && _fw=1024
-    [ -z "$_fh" ] && _fh=768
+    if { [ -z "$_fw" ] || [ -z "$_fh" ]; } && [ -r /sys/class/graphics/fb0/modes ]; then
+        _fb_mode=$(sed -n '1s/.*:\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' /sys/class/graphics/fb0/modes 2>/dev/null)
+        set -- $_fb_mode
+        _fw=$1
+        _fh=$2
+    fi
+    case "$_fw" in ''|*[!0-9]*) _fw=1024 ;; esac
+    case "$_fh" in ''|*[!0-9]*) _fh=768 ;; esac
     echo "$_fw $_fh"
+}
+
+qrencode_png() {
+    _png="$1"
+    _scale="$2"
+    _data="$3"
+    _inverted="$4"
+
+    if [ "$_inverted" = "1" ]; then
+        qrencode -o "$_png" -s "$_scale" -m 2 -l L \
+            --foreground=FFFFFF --background=000000 "$_data" 2>/dev/null || \
+            qrencode -o "$_png" -s "$_scale" -m 2 -l L "$_data" 2>/dev/null
+    else
+        qrencode -o "$_png" -s "$_scale" -m 2 -l L \
+            --foreground=000000 --background=FFFFFF "$_data" 2>/dev/null || \
+            qrencode -o "$_png" -s "$_scale" -m 2 -l L "$_data" 2>/dev/null
+    fi
+}
+
+read_key_code() {
+    _old_stty=$(stty -g 2>/dev/null)
+    [ -n "$_old_stty" ] && stty raw -echo 2>/dev/null
+    _code=$(dd bs=1 count=1 2>/dev/null | od -An -tu1 | awk '{ print $1; exit }')
+    [ -n "$_old_stty" ] && stty "$_old_stty" 2>/dev/null
+    echo "$_code"
+}
+
+qr_wait_action() {
+    echo ""
+    echo "Enter: reboot | P/S: power off | E/N: edit ticket | Tab: invert colors"
+
+    while :; do
+        _code=$(read_key_code)
+        case "$_code" in
+            9)
+                qr_action="invert"
+                return 0
+                ;;
+            69|78|101|110)
+                qr_action="edit"
+                return 0
+                ;;
+            80|83|112|115)
+                qr_action="poweroff"
+                return 0
+                ;;
+            82|114)
+                qr_action="reboot"
+                return 0
+                ;;
+            10|13|"")
+                qr_action="reboot"
+                return 0
+                ;;
+        esac
+    done
+}
+
+qr_edit_ticket() {
+    clear
+    echo "Current ticket: $ticket"
+    printf "Enter new ticket/receipt number (empty keeps current): "
+    read new_ticket
+    if [ -n "$new_ticket" ]; then
+        ticket="$new_ticket"
+    fi
+    build_qr_payload
 }
 
 qr_show_framebuffer() {
     _data="$1"
+    _inverted="$2"
     _png="/tmp/hwqr.png"
     set -- $(qr_fb_size)
     _fbw=$1
     _fbh=$2
-    _max=$((_fbw < _fbh ? _fbw : _fbh))
-    _max=$((_max - 60))
+    _min=$((_fbw < _fbh ? _fbw : _fbh))
+    _max=$((_min * 80 / 100))
+    _floor=$((_min - 120))
+    if [ "$_max" -gt "$_floor" ]; then
+        _max=$_floor
+    fi
+    if [ "$_max" -lt 240 ]; then
+        _max=$((_min - 40))
+    fi
+    if [ "$_max" -lt 160 ]; then
+        _max=160
+    fi
 
-    # Pick largest module size that fits the framebuffer (sharper QR on high-res screens).
-    _s=4
-    _best=4
+    # Pick a native PNG size with margin. Avoid fbi autozoom because some GPUs
+    # report framebuffer geometry that makes auto-scaling clip the QR.
+    _s=1
+    _best=1
     while [ "$_s" -le 24 ]; do
-        if ! qrencode -o "$_png" -s "$_s" -m 2 -l L "$_data" 2>/dev/null; then
+        if ! qrencode_png "$_png" "$_s" "$_data" "$_inverted"; then
             _s=$((_s + 1))
             continue
         fi
@@ -544,11 +672,18 @@ qr_show_framebuffer() {
         fi
         _s=$((_s + 1))
     done
-    qrencode -o "$_png" -s "$_best" -m 2 -l L "$_data" 2>/dev/null || return 1
+    qrencode_png "$_png" "$_best" "$_data" "$_inverted" || return 1
 
     clear
     echo "Ticket: $ticket"
     echo "Resolution  : ${_fbw}x${_fbh}"
+    echo "QR size     : ${_best}x modules, max ${_max}px"
+    echo "QR payload  : ${qr_payload_mode}"
+    if [ "$_inverted" = "1" ]; then
+        echo "QR colors   : inverted"
+    else
+        echo "QR colors   : normal"
+    fi
     echo "Scan the QR code on screen."
     echo ""
 
@@ -557,22 +692,22 @@ qr_show_framebuffer() {
     fi
 
     if [ -c /dev/fb0 ]; then
-        fbi -d /dev/fb0 -a -1 -center -noverbose -T quick "$_png" 2>/dev/null || \
-            openvt -c 1 -s -w -- fbi -d /dev/fb0 -a -1 -center -noverbose -T quick "$_png" 2>/dev/null || \
-            fbi -a -1 -center -noverbose -T quick "$_png" 2>/dev/null || return 1
+        fbi -d /dev/fb0 -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || \
+            openvt -c 1 -s -w -- fbi -d /dev/fb0 -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || \
+            fbi -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || return 1
     else
-        fbi -a -1 -center -noverbose -T quick "$_png" 2>/dev/null || return 1
+        fbi -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || return 1
     fi
 
     echo ""
-    echo "Press Enter to reboot..."
-    read dummy
+    qr_wait_action
     killall fbi 2>/dev/null
     return 0
 }
 
 qr_show_terminal() {
     _data="$1"
+    _inverted="$2"
     set -- $(qr_fb_size)
     _fbw=$1
     _fbh=$2
@@ -592,17 +727,50 @@ qr_show_terminal() {
     clear
     echo "Ticket: $ticket"
     echo "Resolution  : ${_fbw}x${_fbh} (terminal QR — rebuild ISO if too large)"
+    echo "QR payload  : ${qr_payload_mode}"
+    if [ "$_inverted" = "1" ]; then
+        echo "QR colors   : inverted"
+    else
+        echo "QR colors   : normal"
+    fi
     echo "Scan the QR code."
     echo "=============================="
+    if [ "$_inverted" = "1" ]; then
+        printf '\033[7m'
+    fi
     printf '%s' "$_data" | qrencode -t UTF8 -l L -m 1 2>/dev/null || \
         printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m 1
+    if [ "$_inverted" = "1" ]; then
+        printf '\033[0m'
+    fi
     echo "=============================="
-    echo ""
-    echo "Press Enter to reboot..."
-    read dummy
+    qr_wait_action
 }
 
-if ! qr_show_framebuffer "$qr_payload"; then
-    qr_show_terminal "$qr_payload"
-fi
-reboot
+qr_inverted=0
+while :; do
+    if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
+        qr_show_terminal "$qr_payload" "$qr_inverted"
+    fi
+
+    case "$qr_action" in
+        invert)
+            if [ "$qr_inverted" = "1" ]; then
+                qr_inverted=0
+            else
+                qr_inverted=1
+            fi
+            ;;
+        edit)
+            qr_edit_ticket
+            ;;
+        poweroff)
+            poweroff
+            exit 0
+            ;;
+        reboot|*)
+            reboot
+            exit 0
+            ;;
+    esac
+done

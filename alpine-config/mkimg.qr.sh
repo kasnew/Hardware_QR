@@ -11,8 +11,9 @@ profile_qr() {
     # usbdelay=1  — nlplug-findfs timeout 1s after last uevent (instead of default ~6s)
     # modprobe.blacklist=floppy,sr_mod,cdrom — prevent 60s timeout on empty CD/DVD drives
     # printk.time=1 initcall_debug — boot profiling tools
-    # Higher framebuffer (1920x1080 → 1366x768 → 1280x1024 → 1024x768). nomodeset removed so video= applies.
-    kernel_cmdline="video=1920x1080@60,1366x768@60,1280x1024@60,1024x768@60 modprobe.blacklist=floppy,sr_mod,cdrom usbdelay=1 edd=off nopnp"
+    # Prefer firmware/simple framebuffer over GPU-specific KMS. This is more
+    # predictable on newer Intel Iris and NVIDIA cards where QR auto-scaling can clip.
+    kernel_cmdline="nomodeset video=1024x768@60 modprobe.blacklist=floppy,sr_mod,cdrom usbdelay=1 edd=off nopnp"
     initfs_features="ata base ext4 nvme scsi usb vfat loop squashfs cdrom"
     apks="$apks libqrencode-tools util-linux pciutils lsblk coreutils dmidecode smartmontools fbida file kbd"
     apkovl="genapkovl-qr.sh"
