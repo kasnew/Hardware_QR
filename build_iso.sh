@@ -113,10 +113,10 @@ $DOCKER build --no-cache \
 
 echo "Extracting ISO from container..."
 CONTAINER_ID=$($DOCKER create alpine-iso-builder)
-$DOCKER cp ${CONTAINER_ID}:/out/. ${OUT_DIR}/
-$DOCKER rm ${CONTAINER_ID}
+$DOCKER cp "${CONTAINER_ID}:/out/." "${OUT_DIR}/"
+$DOCKER rm "${CONTAINER_ID}"
 
-ISO_FILE=$(ls ${OUT_DIR}/*.iso | head -n 1)
+ISO_FILE=$(find "${OUT_DIR}" -maxdepth 1 -type f -name '*.iso' | head -n 1)
 mv -f "${ISO_FILE}" "${WORKSPACE_DIR}/alpine-hardware-qr.iso"
 rm -rf "${OUT_DIR}"
 rm -f Dockerfile.build
