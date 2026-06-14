@@ -23,10 +23,10 @@
 
 clear
 echo "====================================="
-echo "   SERVICE CENTER HARDWARE UTILITY   "
+echo "   УТИЛІТА ЗБОРУ ДАНИХ ЗАЛІЗА       "
 echo "====================================="
 echo ""
-printf "Enter Ticket Number: "
+printf "Введіть номер заявки: "
 read ticket
 if [ -z "$ticket" ]; then
     ticket="NO_TICKET"
@@ -505,43 +505,43 @@ disk_count=$_disk_i
 build_qr_payload
 
 clear
-echo "--- Hardware Data Collected ---"
-echo "Ticket      : $ticket"
-echo "Scanned     : $scan_dt"
-echo "CPU         : $cpu ($cpu_ct cores/threads)"
-echo "RAM         : $ram"
+echo "--- Зібрані дані про залізо ---"
+echo "Заявка     : $ticket"
+echo "Скановано  : $scan_dt"
+echo "CPU        : $cpu ($cpu_ct ядер/потоків)"
+echo "ОЗП        : $ram"
 if [ -n "$ram_modules" ]; then
-    echo "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  DIMM        : /' | tr '/' ' '
+    echo "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  Планка ОЗП  : /' | tr '/' ' '
 else
-    echo "  DIMM        : (not available)"
+    echo "  Планка ОЗП  : (недоступно)"
 fi
-echo "System      : $sys_manufacturer $product_name (SN: $system_serial)"
-echo "Asset tag   : $asset_tag"
-echo "UUID        : $system_uuid"
-echo "Motherboard : $mb_vendor_model (SN: $mb_serial)"
-echo "BIOS        : $bios ($bios_date)"
-echo "BIOS full   : $bios_full"
-echo "TPM         : $tpm_status"
+echo "Система    : $sys_manufacturer $product_name (SN: $system_serial)"
+echo "Інв. №     : $asset_tag"
+echo "UUID       : $system_uuid"
+echo "Мат. плата : $mb_vendor_model (SN: $mb_serial)"
+echo "BIOS       : $bios ($bios_date)"
+echo "BIOS повн. : $bios_full"
+echo "TPM        : $tpm_status"
 if [ -n "$gpus" ]; then
-    printf '%s\n' "$gpus" | sed 's/^/  GPU         : /'
+    printf '%s\n' "$gpus" | sed 's/^/  GPU        : /'
 else
-    echo "  GPU         : (not detected)"
+    echo "  GPU        : (не виявлено)"
 fi
 if [ "$battery_count" -gt 0 ]; then
-    echo "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Battery     : /' | tr '/' ' '
+    echo "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Батарея    : /' | tr '/' ' '
 else
-    echo "  Battery     : (none)"
+    echo "  Батарея    : (немає)"
 fi
 if [ "$disk_count" -gt 0 ]; then
-    echo "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Drive       : /' | tr '/' ' '
+    echo "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Диск       : /' | tr '/' ' '
 else
-    echo "  Drive       : (none)"
+    echo "  Диск       : (немає)"
 fi
-echo "QR schema   : v1 (segments TAG/field/... separated by |)"
+echo "Схема QR   : v1 (сегменти TAG/поле/... через |)"
 echo "-------------------------------"
 echo ""
 
-echo "Press Enter to generate QR Code..."
+echo "Натисніть Enter для генерації QR-коду..."
 read dummy
 
 qr_png_width() {
@@ -755,9 +755,9 @@ read_key_code() {
 
 qr_wait_action() {
     echo ""
-    echo "= / + : larger QR   - : smaller QR   0 : auto QR size"
-    echo "V : next screen resolution   Tab : invert colors"
-    echo "E / N : edit ticket   Enter / R : reboot   P / S : power off"
+    echo "= / + : збільшити QR   - : зменшити QR   0 : авто-масштаб"
+    echo "V : наступна роздільність   Tab : інверсія кольорів"
+    echo "E / N : змінити заявку   Enter / R : перезавантаження   P / S : вимкнення"
 
     while :; do
         _code=$(read_key_code)
@@ -804,8 +804,8 @@ qr_wait_action() {
 
 qr_edit_ticket() {
     clear
-    echo "Current ticket: $ticket"
-    printf "Enter new ticket/receipt number (empty keeps current): "
+    echo "Поточна заявка: $ticket"
+    printf "Новий номер заявки (порожньо — залишити поточний): "
     read new_ticket
     if [ -n "$new_ticket" ]; then
         ticket="$new_ticket"
@@ -827,21 +827,26 @@ qr_show_framebuffer() {
     _pw=$(qr_png_width "$_png")
 
     clear
-    echo "Ticket: $ticket"
-    echo "Screen      : ${_fbw}x${_fbh}  (V: cycle resolution)"
+    echo "Заявка: $ticket"
+    echo "Екран      : ${_fbw}x${_fbh}  (V: змінити роздільність)"
     if [ "$qr_scale" -le 0 ]; then
-        echo "QR scale    : ${_best} modules (auto, max ${qr_scale_max})  (=/- adjust)"
+        echo "Масштаб QR  : ${_best} модулів (авто, макс. ${qr_scale_max})  (=/-)"
     else
-        echo "QR scale    : ${_best} modules (manual, max ${qr_scale_max})  (0: auto)"
+        echo "Масштаб QR  : ${_best} модулів (вручну, макс. ${qr_scale_max})  (0: авто)"
     fi
-    echo "QR image    : ${_pw}px wide"
-    echo "QR payload  : ${qr_payload_mode}"
+    echo "Ширина QR   : ${_pw} px"
+    case "$qr_payload_mode" in
+        gzip+base64) _payload_lbl="стиснуто" ;;
+        raw) _payload_lbl="без стиснення" ;;
+        *) _payload_lbl="$qr_payload_mode" ;;
+    esac
+    echo "Формат QR   : ${_payload_lbl}"
     if [ "$_inverted" = "1" ]; then
-        echo "QR colors   : inverted"
+        echo "Кольори QR  : інверсія"
     else
-        echo "QR colors   : normal"
+        echo "Кольори QR  : звичайні"
     fi
-    echo "Scan the QR code on screen."
+    echo "Скануйте QR-код на екрані."
     echo ""
 
     if ! command -v fbi >/dev/null 2>&1; then
@@ -882,21 +887,26 @@ qr_show_terminal() {
     fi
 
     clear
-    echo "Ticket: $ticket"
+    echo "Заявка: $ticket"
     set -- $(qr_fb_size)
-    echo "Screen      : ${1}x${2}  (V: cycle resolution)"
+    echo "Екран      : ${1}x${2}  (V: змінити роздільність)"
     if [ "$qr_scale" -le 0 ]; then
-        echo "QR scale    : auto (terminal mode; =/- if framebuffer available)"
+        echo "Масштаб QR  : авто (режим терміналу; =/- якщо є framebuffer)"
     else
-        echo "QR scale    : ${qr_scale} modules (manual)"
+        echo "Масштаб QR  : ${qr_scale} модулів (вручну)"
     fi
-    echo "QR payload  : ${qr_payload_mode}"
+    case "$qr_payload_mode" in
+        gzip+base64) _payload_lbl="стиснуто" ;;
+        raw) _payload_lbl="без стиснення" ;;
+        *) _payload_lbl="$qr_payload_mode" ;;
+    esac
+    echo "Формат QR   : ${_payload_lbl}"
     if [ "$_inverted" = "1" ]; then
-        echo "QR colors   : inverted"
+        echo "Кольори QR  : інверсія"
     else
-        echo "QR colors   : normal"
+        echo "Кольори QR  : звичайні"
     fi
-    echo "Scan the QR code."
+    echo "Скануйте QR-код."
     echo "=============================="
     if [ "$_inverted" = "1" ]; then
         printf '\033[7m'

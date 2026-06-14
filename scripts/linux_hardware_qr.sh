@@ -129,7 +129,7 @@ build_qr_payload() {
 }
 
 if [ -z "$ticket" ]; then
-    printf "Enter Ticket Number: "
+    printf "Введіть номер заявки: "
     IFS= read -r ticket
 fi
 [ -n "$ticket" ] || ticket="NO_TICKET"
@@ -355,64 +355,69 @@ fi
 build_qr_payload
 
 clear 2>/dev/null || true
-echo "--- Hardware Data Collected ---"
-echo "Ticket      : $ticket"
-echo "Scanned     : $scan_dt"
-echo "CPU         : $cpu ($cpu_ct cores/threads)"
-echo "RAM         : $ram"
+echo "--- Зібрані дані про залізо ---"
+echo "Заявка     : $ticket"
+echo "Скановано  : $scan_dt"
+echo "CPU        : $cpu ($cpu_ct ядер/потоків)"
+echo "ОЗП        : $ram"
 if [ -n "$ram_modules" ]; then
-    printf '%s\n' "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  DIMM      : /' | tr '/' ' '
+    printf '%s\n' "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  Планка ОЗП  : /' | tr '/' ' '
 else
-    echo "  DIMM      : (not available)"
+    echo "  Планка ОЗП  : (недоступно)"
 fi
-echo "System      : $sys_manufacturer $product_name (SN: $system_serial)"
-echo "Asset tag   : $asset_tag"
-echo "UUID        : $system_uuid"
-echo "Motherboard : $mb_vendor_model (SN: $mb_serial)"
-echo "BIOS        : $bios ($bios_date)"
-echo "BIOS full   : $bios_full"
-echo "TPM         : $tpm_status"
+echo "Система    : $sys_manufacturer $product_name (SN: $system_serial)"
+echo "Інв. №     : $asset_tag"
+echo "UUID       : $system_uuid"
+echo "Мат. плата : $mb_vendor_model (SN: $mb_serial)"
+echo "BIOS       : $bios ($bios_date)"
+echo "BIOS повн. : $bios_full"
+echo "TPM        : $tpm_status"
 if [ -n "$gpus" ]; then
-    printf '%s\n' "$gpus" | sed 's/^/  GPU       : /'
+    printf '%s\n' "$gpus" | sed 's/^/  GPU        : /'
 else
-    echo "  GPU       : (not detected)"
+    echo "  GPU        : (не виявлено)"
 fi
 if [ "$battery_count" -gt 0 ]; then
-    printf '%s\n' "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Battery   : /' | tr '/' ' '
+    printf '%s\n' "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Батарея    : /' | tr '/' ' '
 else
-    echo "  Battery   : (none)"
+    echo "  Батарея    : (немає)"
 fi
 if [ "$disk_count" -gt 0 ]; then
-    printf '%s\n' "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Drive     : /' | tr '/' ' '
+    printf '%s\n' "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Диск       : /' | tr '/' ' '
 else
-    echo "  Drive     : (none)"
+    echo "  Диск       : (немає)"
 fi
-echo "QR schema   : v1 ($qr_payload_mode)"
+case "$qr_payload_mode" in
+    gzip+base64) _payload_lbl="стиснуто" ;;
+    raw) _payload_lbl="без стиснення" ;;
+    *) _payload_lbl="$qr_payload_mode" ;;
+esac
+echo "Схема QR   : v1 (${_payload_lbl})"
 echo "-------------------------------"
 echo ""
-printf "Press Enter to generate QR Code..."
+printf "Натисніть Enter для генерації QR-коду..."
 IFS= read -r _dummy
 
 printf '%s' "$qr_payload" > "$payload_file"
 echo ""
-echo "Payload txt : $payload_file"
+echo "Файл даних  : $payload_file"
 
 if command -v qrencode >/dev/null 2>&1; then
     if qrencode -o "$png_file" -s 8 -m 4 -l L "$qr_payload"; then
-        echo "QR image    : $png_file"
+        echo "QR-зображ.  : $png_file"
     else
-        echo "QR image    : failed to generate $png_file"
+        echo "QR-зображ.  : не вдалося створити $png_file"
     fi
     if [ "$show_terminal" -eq 1 ]; then
         echo ""
-        echo "Scan the QR code:"
+        echo "Скануйте QR-код:"
         echo "=============================="
         printf '%s' "$qr_payload" | qrencode -t UTF8 -l L -m 1 2>/dev/null || \
             printf '%s' "$qr_payload" | qrencode -t ANSIUTF8 -l L -m 1
         echo "=============================="
     fi
 else
-    echo "qrencode is not installed. Install it to generate a QR image."
+    echo "qrencode не встановлено. Встановіть для генерації QR."
     echo "Debian/Ubuntu: sudo apt install qrencode"
     echo "Arch/Manjaro : sudo pacman -S qrencode"
     echo "Fedora       : sudo dnf install qrencode"

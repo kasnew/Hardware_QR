@@ -44,6 +44,8 @@ sort -u /profile/packages.x86_64 /src/arch-config/qr/packages.extra > /tmp/packa
 mv /tmp/packages.merged /profile/packages.x86_64
 cp -a /src/arch-config/qr/airootfs/. /profile/airootfs/
 install -Dm755 /src/src/hardware_qr.sh /profile/airootfs/usr/local/bin/hardware_qr.sh
+cp /src/arch-config/qr/customize_airootfs.sh /profile/customize_airootfs.sh
+chmod 755 /profile/customize_airootfs.sh
 mkarchiso -v -w /tmp/work -o /out /profile
 '
 
