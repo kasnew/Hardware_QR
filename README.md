@@ -59,6 +59,43 @@ MODLOOP_COMPRESSOR=xz ./build_iso.sh
 
 Підтримувані значення `MODLOOP_COMPRESSOR`: `zstd`, `gzip`, `lzo`, `xz`.
 
+## 🖥 Окремі скрипти без Live ISO
+
+Якщо потрібно зібрати QR прямо з уже запущеної ОС, використовуйте окремі скрипти з папки `scripts/`.
+
+### Windows
+
+PowerShell-скрипт не потребує зовнішніх модулів: він збирає дані через CIM/WMI, генерує сумісний payload `V/1|...` і створює BMP з QR-кодом.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_hardware_qr.ps1
+```
+
+Опційно:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows_hardware_qr.ps1 -Ticket 12345 -OutputPath .\hardware-qr.bmp
+```
+
+Результати: `hardware-qr.bmp` і `hardware-qr.payload.txt`.
+
+### Linux
+
+Linux-скрипт використовує стандартні системні джерела (`/sys`, `lscpu`, `lsblk`, `dmidecode`, `smartctl`) і `qrencode` для QR-коду. Для повніших SMBIOS/SMART-даних краще запускати через `sudo`.
+
+```bash
+chmod +x scripts/linux_hardware_qr.sh
+sudo ./scripts/linux_hardware_qr.sh
+```
+
+Опційно:
+
+```bash
+./scripts/linux_hardware_qr.sh --ticket 12345 --png hardware-qr.png --payload hardware-qr-payload.txt
+```
+
+Результати: `hardware-qr.png` і `hardware-qr-payload.txt`.
+
 ## 📄 Формат QR для материнської програми
 
 Інструкція з парсингу згенерованого QR-коду (схема v1): [docs/QR_SCHEMA_v1.md](docs/QR_SCHEMA_v1.md)
