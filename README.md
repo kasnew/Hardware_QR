@@ -32,8 +32,13 @@
 2. **`alpine-config/`**: Папка з конфігураційними файлами для збірки Alpine Linux:
    - `mkimg.qr.sh`: Описує профайл ISO образу (параметри ядра, роздільну здатність екрану, базові пакети).
    - `genapkovl-qr.sh`: Скрипт-оверлей, який "вживлює" наш скрипт `hardware_qr.sh` всередину ОС під час збірки, а також налаштовує автологін в консоль (tty1).
-3. **`build_iso.sh`**: Скрипт, який запускає весь процес створення ISO образу в ізольованому середовищі **Docker**, що гарантує відтворюваність збірки на будь-якому ПК.
-4. **Скрипти тестування та розгортання**:
+3. **`build_iso.sh`**: Меню вибору збірки (**Alpine** або **Arch**) у Docker:
+   - `./build_iso.sh` — інтерактивне меню
+   - `./build_iso.sh alpine` / `./build_iso.sh arch` — без меню
+   - `BUILD_TARGET=arch ./build_iso.sh` — через змінну середовища
+   - `build_iso_alpine.sh` / `build_iso_arch.sh` — окремі скрипти
+4. **`arch-config/`**: Профіль **archiso** для Arch Live (`arch-hardware-qr.iso`).
+5. **Скрипти тестування та розгортання**:
    - `run_qemu.sh`: Дозволяє миттєво протестувати згенерований образ у віртуальній машині QEMU без перезавантаження комп'ютера розробника.
    - `install_deps.sh`: Універсальний скрипт для встановлення всіх необхідних інструментів (Docker, QEMU) на нові комп'ютери під управлінням Arch, Debian/Ubuntu або Fedora.
 
@@ -41,9 +46,11 @@
 Якщо ви клонували цей репозиторій на новий ПК:
 1. Запустіть скрипт встановлення залежностей: `sudo ./install_deps.sh` (встановить Docker, QEMU тощо).
 2. Переконайтеся, що ви вийшли/зайшли в систему (щоб запрацював доступ до Docker).
-3. Запустіть скрипт збірки: `./build_iso.sh`.
-4. Готовий образ з'явиться у папці під назвою `alpine-hardware-qr.iso`.
-5. Для перевірки працездатності запустіть `./run_qemu.sh`.
+3. Запустіть меню збірки: `./build_iso.sh` і оберіть **Alpine** або **Arch**.
+4. Готовий образ:
+   - Alpine: `alpine-hardware-qr.iso`
+   - Arch: `arch-hardware-qr.iso`
+5. Для перевірки: `./run_qemu.sh` (або `./run_qemu.sh arch`).
 
 ### Швидкість старту ISO
 
@@ -52,9 +59,9 @@
 Для A/B тесту можна зібрати варіанти:
 
 ```bash
-MODLOOP_COMPRESSOR=zstd MODLOOP_ZSTD_LEVEL=1 ./build_iso.sh
-MODLOOP_COMPRESSOR=gzip ./build_iso.sh
-MODLOOP_COMPRESSOR=xz ./build_iso.sh
+MODLOOP_COMPRESSOR=zstd MODLOOP_ZSTD_LEVEL=1 ./build_iso.sh alpine
+MODLOOP_COMPRESSOR=gzip ./build_iso.sh alpine
+MODLOOP_COMPRESSOR=xz ./build_iso.sh alpine
 ```
 
 Підтримувані значення `MODLOOP_COMPRESSOR`: `zstd`, `gzip`, `lzo`, `xz`.
