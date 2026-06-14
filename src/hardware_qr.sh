@@ -568,6 +568,25 @@ qr_fb_size() {
     echo "$_fw $_fh"
 }
 
+qr_fb_max_px() {
+    set -- $(qr_fb_size)
+    _fbw=$1
+    _fbh=$2
+    _min=$((_fbw < _fbh ? _fbw : _fbh))
+    _max=$((_min * 80 / 100))
+    _floor=$((_min - 120))
+    if [ "$_max" -gt "$_floor" ]; then
+        _max=$_floor
+    fi
+    if [ "$_max" -lt 240 ]; then
+        _max=$((_min - 40))
+    fi
+    if [ "$_max" -lt 160 ]; then
+        _max=160
+    fi
+    echo "$_max"
+}
+
 qrencode_png() {
     _png="$1"
     _scale="$2"
@@ -585,6 +604,147 @@ qrencode_png() {
     fi
 }
 
+# QR display tuning (adjust on QR screen with =/-, 0, R)
+qr_scale=0          # 0 = auto-fit; otherwise qrencode -s module size
+qr_scale_auto=8
+qr_scale_max=24
+qr_res_modes=""
+qr_res_idx=0
+qr_res_current=""
+
+qr_list_res_modes() {
+    _avail=""
+    if [ -r /sys/class/graphics/fb0/modes ]; then
+        _avail=$(sed -n 's/.*:\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1x\2/p' \
+            /sys/class/graphics/fb0/modes 2>/dev/null | sort -u)
+    fi
+    _result=""
+    for _m in 1024x768 1280x1024 1280x720 1366x768 1600x900 1920x1080; do
+        if [ -z "$_avail" ] || printf '%s\n' "$_avail" | grep -qx "$_m" 2>/dev/null; then
+            _result="$_result $_m"
+        fi
+    done
+    _result=$(echo "$_result" | awk '{$1=$1};1')
+    if [ -z "$_result" ]; then
+        echo "1024x768"
+    else
+        echo "$_result"
+    fi
+}
+
+qr_init_display_modes() {
+    qr_res_modes=$(qr_list_res_modes)
+    set -- $(qr_fb_size)
+    qr_res_current="${1}x${2}"
+    qr_res_idx=0
+    _i=0
+    for _m in $qr_res_modes; do
+        if [ "$_m" = "$qr_res_current" ]; then
+            qr_res_idx=$_i
+            break
+        fi
+        _i=$((_i + 1))
+    done
+}
+
+qr_apply_resolution() {
+    _mode="$1"
+    _w=${_mode%x*}
+    _h=${_mode#*x}
+    case "$_w" in ''|*[!0-9]*) return 1 ;; esac
+    case "$_h" in ''|*[!0-9]*) return 1 ;; esac
+
+    if command -v fbset >/dev/null 2>&1; then
+        fbset "$_mode" 2>/dev/null || \
+            fbset -g "$_w" "$_h" "$_w" "$_h" 32 2>/dev/null || return 1
+    else
+        return 1
+    fi
+    qr_res_current="$_mode"
+    qr_scale=0
+    return 0
+}
+
+qr_cycle_resolution() {
+    [ -n "$qr_res_modes" ] || qr_init_display_modes
+    set -- $qr_res_modes
+    _count=$#
+    [ "$_count" -gt 0 ] || return 1
+    qr_res_idx=$(( (qr_res_idx + 1) % _count ))
+    _i=0
+    for _m in $qr_res_modes; do
+        if [ "$_i" -eq "$qr_res_idx" ]; then
+            qr_apply_resolution "$_m" && return 0
+            return 1
+        fi
+        _i=$((_i + 1))
+    done
+    return 1
+}
+
+qr_compute_auto_scale() {
+    _data="$1"
+    _inverted="$2"
+    _png="/tmp/hwqr_probe.png"
+    _max=$(qr_fb_max_px)
+    _s=1
+    _best=1
+
+    while [ "$_s" -le 24 ]; do
+        if ! qrencode_png "$_png" "$_s" "$_data" "$_inverted"; then
+            _s=$((_s + 1))
+            continue
+        fi
+        _w=$(qr_png_width "$_png")
+        if [ -n "$_w" ] && [ "$_w" -le "$_max" ]; then
+            _best=$_s
+        else
+            break
+        fi
+        _s=$((_s + 1))
+    done
+    rm -f "$_png"
+    qr_scale_auto=$_best
+    qr_scale_max=$_best
+    echo "$_best"
+}
+
+qr_effective_scale() {
+    _data="$1"
+    _inverted="$2"
+    _auto=$(qr_compute_auto_scale "$_data" "$_inverted")
+
+    if [ "$qr_scale" -le 0 ]; then
+        echo "$_auto"
+        return
+    fi
+
+    if [ "$qr_scale" -gt "$qr_scale_max" ]; then
+        qr_scale=$qr_scale_max
+    fi
+    if [ "$qr_scale" -lt 1 ]; then
+        qr_scale=1
+    fi
+    echo "$qr_scale"
+}
+
+qr_scale_adjust() {
+    _delta="$1"
+    _data="$2"
+    _inverted="$3"
+
+    if [ "$qr_scale" -le 0 ]; then
+        qr_scale=$(qr_compute_auto_scale "$_data" "$_inverted")
+    fi
+    qr_scale=$((qr_scale + _delta))
+    if [ "$qr_scale" -gt "$qr_scale_max" ]; then
+        qr_scale=$qr_scale_max
+    fi
+    if [ "$qr_scale" -lt 1 ]; then
+        qr_scale=1
+    fi
+}
+
 read_key_code() {
     _old_stty=$(stty -g 2>/dev/null)
     [ -n "$_old_stty" ] && stty raw -echo 2>/dev/null
@@ -595,13 +755,31 @@ read_key_code() {
 
 qr_wait_action() {
     echo ""
-    echo "Enter: reboot | P/S: power off | E/N: edit ticket | Tab: invert colors"
+    echo "= / + : larger QR   - : smaller QR   0 : auto QR size"
+    echo "V : next screen resolution   Tab : invert colors"
+    echo "E / N : edit ticket   Enter / R : reboot   P / S : power off"
 
     while :; do
         _code=$(read_key_code)
         case "$_code" in
             9)
                 qr_action="invert"
+                return 0
+                ;;
+            43|61)
+                qr_action="scale_up"
+                return 0
+                ;;
+            45)
+                qr_action="scale_down"
+                return 0
+                ;;
+            48)
+                qr_action="scale_auto"
+                return 0
+                ;;
+            86|118)
+                qr_action="resolution"
                 return 0
                 ;;
             69|78|101|110)
@@ -642,42 +820,21 @@ qr_show_framebuffer() {
     set -- $(qr_fb_size)
     _fbw=$1
     _fbh=$2
-    _min=$((_fbw < _fbh ? _fbw : _fbh))
-    _max=$((_min * 80 / 100))
-    _floor=$((_min - 120))
-    if [ "$_max" -gt "$_floor" ]; then
-        _max=$_floor
-    fi
-    if [ "$_max" -lt 240 ]; then
-        _max=$((_min - 40))
-    fi
-    if [ "$_max" -lt 160 ]; then
-        _max=160
-    fi
+    qr_res_current="${_fbw}x${_fbh}"
 
-    # Pick a native PNG size with margin. Avoid fbi autozoom because some GPUs
-    # report framebuffer geometry that makes auto-scaling clip the QR.
-    _s=1
-    _best=1
-    while [ "$_s" -le 24 ]; do
-        if ! qrencode_png "$_png" "$_s" "$_data" "$_inverted"; then
-            _s=$((_s + 1))
-            continue
-        fi
-        _w=$(qr_png_width "$_png")
-        if [ -n "$_w" ] && [ "$_w" -le "$_max" ]; then
-            _best=$_s
-        else
-            break
-        fi
-        _s=$((_s + 1))
-    done
+    _best=$(qr_effective_scale "$_data" "$_inverted")
     qrencode_png "$_png" "$_best" "$_data" "$_inverted" || return 1
+    _pw=$(qr_png_width "$_png")
 
     clear
     echo "Ticket: $ticket"
-    echo "Resolution  : ${_fbw}x${_fbh}"
-    echo "QR size     : ${_best}x modules, max ${_max}px"
+    echo "Screen      : ${_fbw}x${_fbh}  (V: cycle resolution)"
+    if [ "$qr_scale" -le 0 ]; then
+        echo "QR scale    : ${_best} modules (auto, max ${qr_scale_max})  (=/- adjust)"
+    else
+        echo "QR scale    : ${_best} modules (manual, max ${qr_scale_max})  (0: auto)"
+    fi
+    echo "QR image    : ${_pw}px wide"
     echo "QR payload  : ${qr_payload_mode}"
     if [ "$_inverted" = "1" ]; then
         echo "QR colors   : inverted"
@@ -726,7 +883,13 @@ qr_show_terminal() {
 
     clear
     echo "Ticket: $ticket"
-    echo "Resolution  : ${_fbw}x${_fbh} (terminal QR — rebuild ISO if too large)"
+    set -- $(qr_fb_size)
+    echo "Screen      : ${1}x${2}  (V: cycle resolution)"
+    if [ "$qr_scale" -le 0 ]; then
+        echo "QR scale    : auto (terminal mode; =/- if framebuffer available)"
+    else
+        echo "QR scale    : ${qr_scale} modules (manual)"
+    fi
     echo "QR payload  : ${qr_payload_mode}"
     if [ "$_inverted" = "1" ]; then
         echo "QR colors   : inverted"
@@ -748,12 +911,25 @@ qr_show_terminal() {
 }
 
 qr_inverted=0
+qr_init_display_modes
 while :; do
     if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
         qr_show_terminal "$qr_payload" "$qr_inverted"
     fi
 
     case "$qr_action" in
+        scale_up)
+            qr_scale_adjust 1 "$qr_payload" "$qr_inverted"
+            ;;
+        scale_down)
+            qr_scale_adjust -1 "$qr_payload" "$qr_inverted"
+            ;;
+        scale_auto)
+            qr_scale=0
+            ;;
+        resolution)
+            qr_cycle_resolution || true
+            ;;
         invert)
             if [ "$qr_inverted" = "1" ]; then
                 qr_inverted=0
@@ -763,6 +939,7 @@ while :; do
             ;;
         edit)
             qr_edit_ticket
+            qr_scale=0
             ;;
         poweroff)
             poweroff
