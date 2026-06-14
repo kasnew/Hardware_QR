@@ -15,6 +15,6 @@ profile_qr() {
     # predictable on newer Intel Iris and NVIDIA cards where QR auto-scaling can clip.
     kernel_cmdline="nomodeset video=1024x768@60 modprobe.blacklist=floppy,sr_mod,cdrom usbdelay=1 edd=off nopnp"
     initfs_features="ata base ext4 nvme scsi usb vfat loop squashfs cdrom"
-    apks="$apks libqrencode-tools util-linux pciutils lsblk coreutils dmidecode smartmontools fbida file kbd fbset"
+    apks="$apks libqrencode-tools util-linux pciutils lsblk coreutils dmidecode smartmontools fbida file kbd"
     apkovl="genapkovl-qr.sh"
 }

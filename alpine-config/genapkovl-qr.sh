@@ -51,7 +51,6 @@ lsblk
 pciutils
 smartmontools
 util-linux
-fbset
 EOFSH
 
 # Inject Custom Configuration Files
