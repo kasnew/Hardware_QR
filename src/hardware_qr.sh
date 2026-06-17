@@ -21,6 +21,38 @@
 #   V/1|Z/<base64(gzip(v1 payload))>
 # Parent app: if text starts with "V/1|Z/", gunzip+base64 decode, then parse v1.
 
+qr_set_console_font() {
+    command -v setfont >/dev/null 2>&1 || return 0
+
+    if [ -f /etc/arch-release ]; then
+        for _dir in /usr/share/kbd/consolefonts; do
+            [ -d "$_dir" ] || continue
+            for _name in LatArCyrHeb-16 UniCyr_8x16 Cyr_a8x16 LatArCyrHeb-14; do
+                for _ext in .psfu.gz .psf.gz; do
+                    if [ -f "$_dir/$_name$_ext" ]; then
+                        setfont "$_dir/$_name$_ext" 2>/dev/null && return 0
+                    fi
+                done
+            done
+        done
+        return 0
+    fi
+
+    for _font in \
+        /usr/share/kbd/consolefonts/default8x9.psfu.gz \
+        /usr/share/kbd/consolefonts/lat8-08.psfu.gz \
+        /usr/share/kbd/consolefonts/lat9-12.psfu.gz \
+        /usr/share/consolefonts/default8x9.psfu.gz \
+        /usr/share/consolefonts/lat8-08.psfu.gz \
+        /usr/share/consolefonts/lat9-12.psfu.gz; do
+        if [ -f "$_font" ]; then
+            setfont "$_font" 2>/dev/null && return 0
+        fi
+    done
+}
+
+qr_set_console_font
+
 clear
 echo "====================================="
 echo "   УТИЛІТА ЗБОРУ ДАНИХ ЗАЛІЗА       "
@@ -874,17 +906,7 @@ qr_show_terminal() {
     _fbw=$1
     _fbh=$2
 
-    # Smaller font → more columns (helps terminal fallback on wide screens).
-    if command -v setfont >/dev/null 2>&1; then
-        for _font in \
-            /usr/share/kbd/consolefonts/default8x9.psfu.gz \
-            /usr/share/kbd/consolefonts/lat8-08.psfu.gz \
-            /usr/share/kbd/consolefonts/lat9-12.psfu.gz; do
-            if [ -f "$_font" ]; then
-                setfont "$_font" 2>/dev/null && break
-            fi
-        done
-    fi
+    qr_set_console_font
 
     clear
     echo "Заявка: $ticket"
