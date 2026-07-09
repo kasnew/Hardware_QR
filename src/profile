@@ -1,5 +1,0 @@
-#!/bin/sh
-# If logged into tty1, immediately execute the hardware info script
-if [ "$(tty)" = "/dev/tty1" ]; then
-    /usr/local/bin/hardware_qr.sh
-fi

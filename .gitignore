@@ -1,18 +1,10 @@
 # Build artifacts
 *.iso
-vmlinuz-*
-initramfs-*
-
-# Extracted / debug directories
-extract_iso/
-extract_initfs/
-iso_output/
 
 # Temporary files / script artifacts
 *.tmp
 *.log
 /tmp/
-Dockerfile.build
 
 # Editor and IDE files
 .vscode/
