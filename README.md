@@ -1,24 +1,21 @@
 # Hardware QR (Arch-only)
 
-Проєкт переведено в режим **тільки для Arch/Manjaro**.
-Підтримку Alpine Live ISO видалено.
+Проєкт орієнтований на **Arch/Manjaro**: збір QR з уже запущеної системи або через **Arch Live ISO**.
 
-## Що робить проєкт
+## Скрипти (3 точки входу)
 
-Скрипти збирають апаратні характеристики ПК (CPU, RAM, плата, BIOS, GPU, накопичувачі, батарея), формують payload у форматі `V/1|...` та генерують QR-код для швидкого перенесення даних у сервісну систему.
+| Скрипт | Коли використовувати |
+|--------|----------------------|
+| **`install_deps.sh`** | Один раз: встановити пакети |
+| **`scripts/linux_hardware_qr.sh`** | Збір QR на вже запущеній Arch/Manjaro |
+| **`build_iso.sh`** | Збірка Arch Live ISO для флешки |
 
-## Склад репозиторію
+Усередині Live ISO автоматично стартує `scripts/hardware_qr.sh` (його не запускають вручну).
 
-- `scripts/linux_hardware_qr.sh` - збір апаратних даних і генерація QR на Linux (основний сценарій для Arch/Manjaro).
-- `scripts/windows_hardware_qr.ps1` - сумісний генератор payload/QR для Windows.
-- `docs/QR_SCHEMA_v1.md` - схема парсингу QR payload.
-- `install_deps.sh` - встановлення залежностей **лише** для Arch/Manjaro.
-
-## Швидкий старт (Arch/Manjaro)
+## Швидкий старт без ISO
 
 ```bash
 sudo ./install_deps.sh
-chmod +x scripts/linux_hardware_qr.sh
 sudo ./scripts/linux_hardware_qr.sh
 ```
 
@@ -28,7 +25,27 @@ sudo ./scripts/linux_hardware_qr.sh
 ./scripts/linux_hardware_qr.sh --ticket 12345 --png hardware-qr.png --payload hardware-qr-payload.txt
 ```
 
-Результати: `hardware-qr.png` і `hardware-qr-payload.txt`.
+## Збірка Arch Live ISO
+
+```bash
+sudo ./install_deps.sh
+./build_iso.sh
+```
+
+Результат:
+
+```text
+arch-hardware-qr-2026.07.09-150312.iso
+arch-hardware-qr.iso -> arch-hardware-qr-2026.07.09-150312.iso
+```
+
+Фіксований штамп:
+
+```bash
+ISO_BUILD_STAMP=2026.07.09-120000 ./build_iso.sh
+```
+
+Live ISO: `uk_UA.UTF-8`, шрифт `LatArCyrHeb-16`, розкладка `ua`, автозапуск на `tty1`.
 
 ## Windows
 
@@ -36,14 +53,6 @@ sudo ./scripts/linux_hardware_qr.sh
 powershell -ExecutionPolicy Bypass -File .\scripts\windows_hardware_qr.ps1
 ```
 
-Опційно:
+## Формат QR
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\windows_hardware_qr.ps1 -Ticket 12345 -OutputPath .\hardware-qr.bmp
-```
-
-Результати: `hardware-qr.bmp` і `hardware-qr.payload.txt`.
-
-## Формат QR для материнської програми
-
-Інструкція з парсингу згенерованого QR-коду (схема v1): [docs/QR_SCHEMA_v1.md](docs/QR_SCHEMA_v1.md)
+[docs/QR_SCHEMA_v1.md](docs/QR_SCHEMA_v1.md)

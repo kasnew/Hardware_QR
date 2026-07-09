@@ -208,4 +208,4 @@ def parse_hardware_qr(qr_text: str) -> dict:
 
 ---
 
-Джерело генерації: `src/hardware_qr.sh`
+Джерело генерації: `scripts/hardware_qr.sh`

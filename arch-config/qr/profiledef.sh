@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 
-iso_name="hardware_qr"
+iso_name="arch-hardware-qr"
 iso_label="HARDWARE_QR"
 iso_publisher="Hardware QR Project <https://github.com/kasnew/Hardware_QR>"
-iso_application="Hardware QR Live ISO"
-iso_version="$(date +%Y.%m.%d)"
+iso_application="Hardware QR Live ISO (uk_UA)"
+iso_version="0.0.0"
 install_dir="arch"
 buildmodes=('iso')
 bootmodes=('bios.syslinux' 'uefi.systemd-boot')
