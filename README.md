@@ -46,6 +46,7 @@ ISO_BUILD_STAMP=2026.07.09-120000 ./build_iso.sh
 ```
 
 Live ISO: `uk_UA.UTF-8`, шрифт `LatArCyrHeb-16`, розкладка `ua`, автозапуск на `tty1`.
+Параметри ядра: `nomodeset video=1024x768@60` (стабільний QR на AMD Renoir / HiDPI; `V` і `=/-` також змінюють режим/шрифт у рантаймі).
 
 ## Windows
 

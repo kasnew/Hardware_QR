@@ -90,6 +90,23 @@ cp -a /src/arch-config/qr/airootfs/. /profile/airootfs/
 install -Dm755 /src/scripts/hardware_qr.sh /profile/airootfs/usr/local/bin/hardware_qr.sh
 cp /src/arch-config/qr/customize_airootfs.sh /profile/customize_airootfs.sh
 chmod 755 /profile/customize_airootfs.sh
+
+# Predictable console geometry on AMD Renoir / modern GPUs (QR was clipped at native FHD;
+# V/fbset alone often cannot change DRM modes). Matches prior Alpine approach.
+QR_VIDEO_CMDLINE="nomodeset video=1024x768@60"
+for f in /profile/efiboot/loader/entries/*.conf; do
+    [ -f "$f" ] || continue
+    if ! grep -q "video=1024x768" "$f"; then
+        sed -i "s/^options /options ${QR_VIDEO_CMDLINE} /" "$f"
+    fi
+done
+for f in /profile/syslinux/*.cfg; do
+    [ -f "$f" ] || continue
+    if grep -q "^APPEND " "$f" && ! grep -q "video=1024x768" "$f"; then
+        sed -i "s|^APPEND |APPEND ${QR_VIDEO_CMDLINE} |" "$f"
+    fi
+done
+
 mkarchiso -v -w /tmp/work -o /out /profile
 '
 

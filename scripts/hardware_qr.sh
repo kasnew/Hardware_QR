@@ -21,18 +21,74 @@
 #   V/1|Z/<base64(gzip(v1 payload))>
 # Parent app: if text starts with "V/1|Z/", gunzip+base64 decode, then parse v1.
 
-qr_set_console_font() {
-    command -v setfont >/dev/null 2>&1 || return 0
+# Console fonts: large → small. Smaller font = more cells = QR more likely to fit.
+# Used as terminal "scale" when fbi/framebuffer path is unavailable (common on AMD Renoir).
+qr_fonts="LatArCyrHeb-19 LatArCyrHeb-16 LatArCyrHeb-14 Cyr_a8x16 UniCyr_8x16 Cyr_a8x14 UniCyr_8x14 Cyr_a8x8 UniCyr_8x8 LatArCyrHeb-08"
+qr_font_idx=-1
+QR_TERM_RESERVED=15
+qr_term_margin=1
 
+qr_set_font_by_name() {
+    command -v setfont >/dev/null 2>&1 || return 1
+    _name="$1"
     _dir=/usr/share/kbd/consolefonts
-    [ -d "$_dir" ] || return 0
-    for _name in LatArCyrHeb-16 UniCyr_8x16 Cyr_a8x16 LatArCyrHeb-14; do
-        for _ext in .psfu.gz .psf.gz; do
-            if [ -f "$_dir/$_name$_ext" ]; then
-                setfont "$_dir/$_name$_ext" 2>/dev/null && return 0
-            fi
-        done
+    [ -d "$_dir" ] || return 1
+    for _f in \
+        "$_dir/$_name.psfu.gz" \
+        "$_dir/$_name.psf.gz" \
+        "$_dir/$_name.gz" \
+        "$_dir/$_name"; do
+        if [ -f "$_f" ]; then
+            setfont "$_f" 2>/dev/null && return 0
+        fi
     done
+    return 1
+}
+
+qr_set_console_font() {
+    for _name in LatArCyrHeb-16 UniCyr_8x16 Cyr_a8x16 LatArCyrHeb-14; do
+        qr_set_font_by_name "$_name" && return 0
+    done
+    return 0
+}
+
+qr_apply_font_idx() {
+    set -- $qr_fonts
+    _count=$#
+    [ "$_count" -gt 0 ] || return 1
+    if [ "$qr_font_idx" -lt 0 ]; then
+        qr_font_idx=1
+    fi
+    if [ "$qr_font_idx" -ge "$_count" ]; then
+        qr_font_idx=$((_count - 1))
+    fi
+    _i=0
+    for _name in $qr_fonts; do
+        if [ "$_i" -eq "$qr_font_idx" ]; then
+            qr_set_font_by_name "$_name"
+            return $?
+        fi
+        _i=$((_i + 1))
+    done
+    return 1
+}
+
+qr_font_scale_adjust() {
+    _delta="$1"
+    set -- $qr_fonts
+    _count=$#
+    [ "$_count" -gt 0 ] || return 1
+    if [ "$qr_font_idx" -lt 0 ]; then
+        qr_font_idx=1
+    fi
+    qr_font_idx=$((qr_font_idx + _delta))
+    if [ "$qr_font_idx" -lt 0 ]; then
+        qr_font_idx=0
+    fi
+    if [ "$qr_font_idx" -ge "$_count" ]; then
+        qr_font_idx=$((_count - 1))
+    fi
+    qr_apply_font_idx
 }
 
 qr_set_console_font
@@ -564,6 +620,10 @@ qr_png_width() {
     file -b "$1" 2>/dev/null | sed -n 's/.*, \([0-9][0-9]*\) x [0-9][0-9]*.*/\1/p'
 }
 
+qr_png_height() {
+    file -b "$1" 2>/dev/null | sed -n 's/.*, [0-9][0-9]* x \([0-9][0-9]*\).*/\1/p'
+}
+
 qr_fb_size() {
     _fw=1024
     _fh=768
@@ -573,11 +633,15 @@ qr_fb_size() {
         _fw=$1
         _fh=$2
     fi
-    if { [ -z "$_fw" ] || [ -z "$_fh" ]; } && [ -r /sys/class/graphics/fb0/modes ]; then
-        _fb_mode=$(sed -n '1s/.*:\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' /sys/class/graphics/fb0/modes 2>/dev/null)
+    if { [ -z "$_fw" ] || [ -z "$_fh" ] || [ "$_fw" = "0" ] || [ "$_fh" = "0" ]; } \
+        && [ -r /sys/class/graphics/fb0/modes ]; then
+        _fb_mode=$(sed -n '1s/.*:\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1 \2/p' \
+            /sys/class/graphics/fb0/modes 2>/dev/null)
         set -- $_fb_mode
-        _fw=$1
-        _fh=$2
+        if [ -n "$1" ] && [ -n "$2" ]; then
+            _fw=$1
+            _fh=$2
+        fi
     fi
     case "$_fw" in ''|*[!0-9]*) _fw=1024 ;; esac
     case "$_fh" in ''|*[!0-9]*) _fh=768 ;; esac
@@ -589,8 +653,9 @@ qr_fb_max_px() {
     _fbw=$1
     _fbh=$2
     _min=$((_fbw < _fbh ? _fbw : _fbh))
-    _max=$((_min * 80 / 100))
-    _floor=$((_min - 120))
+    # Conservative fit: leave headroom so fbi/center never clips on HiDPI panels.
+    _max=$((_min * 65 / 100))
+    _floor=$((_min - 160))
     if [ "$_max" -gt "$_floor" ]; then
         _max=$_floor
     fi
@@ -620,29 +685,42 @@ qrencode_png() {
     fi
 }
 
-# QR display tuning (adjust on QR screen with =/-, 0, R)
-qr_scale=0          # 0 = auto-fit; otherwise qrencode -s module size
+# QR display tuning (adjust on QR screen with =/-, 0, V)
+qr_scale=0          # 0 = auto-fit; otherwise qrencode -s module size (fbi path)
 qr_scale_auto=8
 qr_scale_max=24
 qr_res_modes=""
 qr_res_idx=0
 qr_res_current=""
+qr_display_mode="term"   # fb | term — last successful path
 
-qr_list_res_modes() {
+qr_collect_available_modes() {
     _avail=""
     if [ -r /sys/class/graphics/fb0/modes ]; then
         _avail=$(sed -n 's/.*:\([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1x\2/p' \
-            /sys/class/graphics/fb0/modes 2>/dev/null | sort -u)
+            /sys/class/graphics/fb0/modes 2>/dev/null)
     fi
+    for _conn in /sys/class/drm/card*-*-*; do
+        [ -e "$_conn/status" ] || continue
+        [ "$(cat "$_conn/status" 2>/dev/null)" = "connected" ] || continue
+        [ -r "$_conn/modes" ] || continue
+        _avail="$_avail $(awk '{ print $1 }' "$_conn/modes" 2>/dev/null)"
+    done
+    echo "$_avail" | tr ' ' '\n' | sed '/^$/d' | sort -u
+}
+
+qr_list_res_modes() {
+    _avail=$(qr_collect_available_modes)
     _result=""
-    for _m in 1024x768 1280x1024 1280x720 1366x768 1600x900 1920x1080; do
+    # Lower modes first — better QR fit on Vivobook/Renoir-class panels.
+    for _m in 800x600 1024x768 1280x720 1280x1024 1366x768 1600x900 1920x1080; do
         if [ -z "$_avail" ] || printf '%s\n' "$_avail" | grep -qx "$_m" 2>/dev/null; then
             _result="$_result $_m"
         fi
     done
     _result=$(echo "$_result" | awk '{$1=$1};1')
     if [ -z "$_result" ]; then
-        echo "1024x768"
+        echo "1024x768 1280x720 800x600"
     else
         echo "$_result"
     fi
@@ -669,15 +747,52 @@ qr_apply_resolution() {
     _h=${_mode#*x}
     case "$_w" in ''|*[!0-9]*) return 1 ;; esac
     case "$_h" in ''|*[!0-9]*) return 1 ;; esac
+    _ok=1
 
-    if command -v fbset >/dev/null 2>&1; then
-        fbset "$_mode" 2>/dev/null || \
-            fbset -g "$_w" "$_h" "$_w" "$_h" 32 2>/dev/null || return 1
-    else
-        return 1
+    # 1) Classic fb sysfs (efifb / simplefb after nomodeset)
+    if [ -w /sys/class/graphics/fb0/mode ]; then
+        for _fmt in "U:${_w}x${_h}-0" "${_w}x${_h}-0" "${_w}x${_h}"; do
+            if printf '%s\n' "$_fmt" > /sys/class/graphics/fb0/mode 2>/dev/null; then
+                _ok=0
+                break
+            fi
+        done
     fi
+
+    # 2) DRM connector mode (amdgpu on Renoir etc.)
+    if [ "$_ok" -ne 0 ]; then
+        for _conn in /sys/class/drm/card*-*-*; do
+            [ -e "$_conn/status" ] || continue
+            [ "$(cat "$_conn/status" 2>/dev/null)" = "connected" ] || continue
+            [ -w "$_conn/mode" ] || continue
+            if [ -r "$_conn/modes" ]; then
+                grep -q "^${_w}x${_h}" "$_conn/modes" 2>/dev/null || continue
+            fi
+            if printf '%s\n' "${_w}x${_h}" > "$_conn/mode" 2>/dev/null; then
+                _ok=0
+                break
+            fi
+        done
+    fi
+
+    # 3) fbset (works on some drivers; often fails on modern DRM)
+    if [ "$_ok" -ne 0 ] && command -v fbset >/dev/null 2>&1; then
+        if fbset "$_mode" 2>/dev/null || fbset -g "$_w" "$_h" "$_w" "$_h" 32 2>/dev/null; then
+            _ok=0
+        fi
+    fi
+
+    # 4) Soft fallback: shrink console font (visible effect when DRM ignores modes)
+    if [ "$_ok" -ne 0 ]; then
+        qr_font_scale_adjust 2
+        qr_res_current="${_mode}~font"
+        qr_scale=0
+        return 0
+    fi
+
     qr_res_current="$_mode"
     qr_scale=0
+    qr_font_idx=-1
     return 0
 }
 
@@ -686,16 +801,34 @@ qr_cycle_resolution() {
     set -- $qr_res_modes
     _count=$#
     [ "$_count" -gt 0 ] || return 1
-    qr_res_idx=$(( (qr_res_idx + 1) % _count ))
-    _i=0
-    for _m in $qr_res_modes; do
-        if [ "$_i" -eq "$qr_res_idx" ]; then
-            qr_apply_resolution "$_m" && return 0
-            return 1
-        fi
-        _i=$((_i + 1))
+    _attempts=0
+    while [ "$_attempts" -lt "$_count" ]; do
+        qr_res_idx=$(( (qr_res_idx + 1) % _count ))
+        _i=0
+        for _m in $qr_res_modes; do
+            if [ "$_i" -eq "$qr_res_idx" ]; then
+                if qr_apply_resolution "$_m"; then
+                    return 0
+                fi
+                break
+            fi
+            _i=$((_i + 1))
+        done
+        _attempts=$((_attempts + 1))
     done
     return 1
+}
+
+qr_prefer_safe_mode() {
+    set -- $(qr_fb_size)
+    _fh=$2
+    case "$_fh" in ''|*[!0-9]*) return 0 ;; esac
+    # Native FHD/QHD on AMD Renoir often breaks fbi and oversizes UTF8 QR.
+    if [ "$_fh" -gt 800 ]; then
+        qr_apply_resolution "1024x768" || qr_apply_resolution "1280x720" || \
+            qr_apply_resolution "800x600" || true
+        qr_init_display_modes
+    fi
 }
 
 qr_compute_auto_scale() {
@@ -712,7 +845,9 @@ qr_compute_auto_scale() {
             continue
         fi
         _w=$(qr_png_width "$_png")
-        if [ -n "$_w" ] && [ "$_w" -le "$_max" ]; then
+        _h=$(qr_png_height "$_png")
+        if [ -n "$_w" ] && [ "$_w" -le "$_max" ] \
+            && { [ -z "$_h" ] || [ "$_h" -le "$_max" ]; }; then
             _best=$_s
         else
             break
@@ -759,6 +894,73 @@ qr_scale_adjust() {
     if [ "$qr_scale" -lt 1 ]; then
         qr_scale=1
     fi
+}
+
+qr_term_size() {
+    _ts=$(stty size 2>/dev/null || echo "24 80")
+    set -- $_ts
+    _lines=${1:-24}
+    _cols=${2:-80}
+    case "$_lines" in ''|*[!0-9]*) _lines=24 ;; esac
+    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
+    echo "$_lines $_cols"
+}
+
+qr_utf8_metrics() {
+    _data="$1"
+    _margin="${2:-$qr_term_margin}"
+    _tmp="/tmp/hwqr_utf8.txt"
+    if ! printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null; then
+        if ! printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null; then
+            echo "0 0"
+            return 1
+        fi
+    fi
+    _ql=$(wc -l < "$_tmp" | tr -d ' ')
+    _qw=$(awk '{ if (length > m) m = length } END { print m+0 }' "$_tmp")
+    case "$_ql" in ''|*[!0-9]*) _ql=0 ;; esac
+    case "$_qw" in ''|*[!0-9]*) _qw=0 ;; esac
+    echo "$_ql $_qw"
+}
+
+qr_term_autofit() {
+    _data="$1"
+    set -- $qr_fonts
+    _count=$#
+    [ "$_count" -gt 0 ] || return 1
+
+    if [ "$qr_font_idx" -ge 0 ]; then
+        qr_apply_font_idx
+        return 0
+    fi
+
+    for _margin in 1 0; do
+        qr_term_margin=$_margin
+        _i=0
+        while [ "$_i" -lt "$_count" ]; do
+            qr_font_idx=$_i
+            qr_apply_font_idx || true
+            set -- $(qr_term_size)
+            _lines=$1
+            _cols=$2
+            _avail=$((_lines - QR_TERM_RESERVED))
+            if [ "$_avail" -lt 10 ]; then
+                _avail=10
+            fi
+            set -- $(qr_utf8_metrics "$_data" "$_margin")
+            _ql=$1
+            _qw=$2
+            if [ "$_ql" -gt 0 ] && [ "$_ql" -le "$_avail" ] && [ "$_qw" -le "$_cols" ]; then
+                return 0
+            fi
+            _i=$((_i + 1))
+        done
+    done
+
+    qr_term_margin=0
+    qr_font_idx=$((_count - 1))
+    qr_apply_font_idx || true
+    return 1
 }
 
 read_key_code() {
@@ -829,10 +1031,31 @@ qr_edit_ticket() {
     build_qr_payload
 }
 
+qr_current_font_name() {
+    set -- $qr_fonts
+    _i=0
+    for _name in $qr_fonts; do
+        if [ "$_i" -eq "$qr_font_idx" ]; then
+            echo "$_name"
+            return 0
+        fi
+        _i=$((_i + 1))
+    done
+    echo "авто"
+}
+
 qr_show_framebuffer() {
     _data="$1"
     _inverted="$2"
     _png="/tmp/hwqr.png"
+
+    if ! command -v fbi >/dev/null 2>&1; then
+        return 1
+    fi
+    if [ ! -c /dev/fb0 ]; then
+        return 1
+    fi
+
     set -- $(qr_fb_size)
     _fbw=$1
     _fbh=$2
@@ -841,6 +1064,9 @@ qr_show_framebuffer() {
     _best=$(qr_effective_scale "$_data" "$_inverted")
     qrencode_png "$_png" "$_best" "$_data" "$_inverted" || return 1
     _pw=$(qr_png_width "$_png")
+
+    _tty_num=$(tty 2>/dev/null | sed -n 's|^/dev/tty||p')
+    case "$_tty_num" in ''|*[!0-9]*) _tty_num=1 ;; esac
 
     clear
     echo "Заявка: $ticket"
@@ -863,22 +1089,27 @@ qr_show_framebuffer() {
         echo "Кольори QR  : звичайні"
     fi
     echo "Скануйте QR-код на екрані."
-    echo ""
+    echo "=/- масштаб | V роздільність | Tab інверсія | Enter reboot"
+    sleep 1
 
-    if ! command -v fbi >/dev/null 2>&1; then
-        return 1
+    # -a autozoom: critical on AMD Renoir / HiDPI where module math alone still clips.
+    fbi -d /dev/fb0 -T "$_tty_num" -a -noverbose "$_png" >/tmp/hwqr_fbi.err 2>&1 &
+    _fbi_pid=$!
+    sleep 0.3
+    if ! kill -0 "$_fbi_pid" 2>/dev/null; then
+        # Retry without explicit device
+        fbi -T "$_tty_num" -a -noverbose "$_png" >/tmp/hwqr_fbi.err 2>&1 &
+        _fbi_pid=$!
+        sleep 0.3
+        if ! kill -0 "$_fbi_pid" 2>/dev/null; then
+            return 1
+        fi
     fi
 
-    if [ -c /dev/fb0 ]; then
-        fbi -d /dev/fb0 -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || \
-            openvt -c 1 -s -w -- fbi -d /dev/fb0 -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || \
-            fbi -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || return 1
-    else
-        fbi -T 1 -1 -t 1 -center -noverbose "$_png" 2>/dev/null || return 1
-    fi
-
-    echo ""
+    qr_display_mode="fb"
     qr_wait_action
+    kill "$_fbi_pid" 2>/dev/null
+    wait "$_fbi_pid" 2>/dev/null
     killall fbi 2>/dev/null
     return 0
 }
@@ -886,20 +1117,24 @@ qr_show_framebuffer() {
 qr_show_terminal() {
     _data="$1"
     _inverted="$2"
+
+    qr_term_autofit "$_data" || true
+
     set -- $(qr_fb_size)
     _fbw=$1
     _fbh=$2
-
-    qr_set_console_font
+    set -- $(qr_term_size)
+    _lines=$1
+    _cols=$2
+    _font_lbl=$(qr_current_font_name)
 
     clear
     echo "Заявка: $ticket"
-    set -- $(qr_fb_size)
-    echo "Екран      : ${1}x${2}  (V: змінити роздільність)"
-    if [ "$qr_scale" -le 0 ]; then
-        echo "Масштаб QR  : авто (режим терміналу; =/- якщо є framebuffer)"
+    echo "Екран      : ${_fbw}x${_fbh}  консоль ${_cols}x${_lines}  (V: роздільність)"
+    if [ "$qr_font_idx" -lt 0 ]; then
+        echo "Масштаб QR  : авто-шрифт (${_font_lbl})  (=/-)"
     else
-        echo "Масштаб QR  : ${qr_scale} модулів (вручну)"
+        echo "Масштаб QR  : шрифт ${_font_lbl}  (0: авто)"
     fi
     case "$qr_payload_mode" in
         gzip+base64) _payload_lbl="стиснуто" ;;
@@ -917,17 +1152,19 @@ qr_show_terminal() {
     if [ "$_inverted" = "1" ]; then
         printf '\033[7m'
     fi
-    printf '%s' "$_data" | qrencode -t UTF8 -l L -m 1 2>/dev/null || \
-        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m 1
+    printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
+        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin"
     if [ "$_inverted" = "1" ]; then
         printf '\033[0m'
     fi
     echo "=============================="
+    qr_display_mode="term"
     qr_wait_action
 }
 
 qr_inverted=0
 qr_init_display_modes
+qr_prefer_safe_mode
 while :; do
     if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
         qr_show_terminal "$qr_payload" "$qr_inverted"
@@ -935,16 +1172,21 @@ while :; do
 
     case "$qr_action" in
         scale_up)
+            # fb: larger modules; term: larger font (smaller font index)
             qr_scale_adjust 1 "$qr_payload" "$qr_inverted"
+            qr_font_scale_adjust -1
             ;;
         scale_down)
             qr_scale_adjust -1 "$qr_payload" "$qr_inverted"
+            qr_font_scale_adjust 1
             ;;
         scale_auto)
             qr_scale=0
+            qr_font_idx=-1
             ;;
         resolution)
             qr_cycle_resolution || true
+            qr_font_idx=-1
             ;;
         invert)
             if [ "$qr_inverted" = "1" ]; then
@@ -956,6 +1198,7 @@ while :; do
         edit)
             qr_edit_ticket
             qr_scale=0
+            qr_font_idx=-1
             ;;
         poweroff)
             poweroff
