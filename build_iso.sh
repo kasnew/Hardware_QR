@@ -91,8 +91,9 @@ install -Dm755 /src/scripts/hardware_qr.sh /profile/airootfs/usr/local/bin/hardw
 cp /src/arch-config/qr/customize_airootfs.sh /profile/customize_airootfs.sh
 chmod 755 /profile/customize_airootfs.sh
 
-# Predictable console geometry on AMD Renoir / modern GPUs (QR was clipped at native FHD;
-# V/fbset alone often cannot change DRM modes). Matches prior Alpine approach.
+# UEFI only: nomodeset+fixed mode keeps QR readable on Renoir/HiDPI (efifb).
+# Do NOT add these to syslinux/BIOS — on Legacy they force broken vesafb
+# (skewed UTF8 QR, clipped text). BIOS boots with normal KMS instead.
 QR_VIDEO_CMDLINE="nomodeset video=1024x768@60"
 for f in /profile/efiboot/loader/entries/*.conf; do
     [ -f "$f" ] || continue
@@ -100,11 +101,15 @@ for f in /profile/efiboot/loader/entries/*.conf; do
         sed -i "s/^options /options ${QR_VIDEO_CMDLINE} /" "$f"
     fi
 done
+# Strip the bad combo if a baseline/syslinux template ever carries it.
+# (double quotes only — this block runs inside bash -c '...')
 for f in /profile/syslinux/*.cfg; do
     [ -f "$f" ] || continue
-    if grep -q "^APPEND " "$f" && ! grep -q "video=1024x768" "$f"; then
-        sed -i "s|^APPEND |APPEND ${QR_VIDEO_CMDLINE} |" "$f"
-    fi
+    sed -i \
+        -e "s/ *nomodeset//g" \
+        -e "s/ *video=1024x768@60//g" \
+        -e "s/ *video=1024x768//g" \
+        "$f"
 done
 
 mkarchiso -v -w /tmp/work -o /out /profile

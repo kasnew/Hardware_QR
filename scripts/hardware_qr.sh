@@ -23,7 +23,16 @@
 
 # Console fonts: large → small. Smaller font = more cells = QR more likely to fit.
 # Used as terminal "scale" when fbi/framebuffer path is unavailable (common on AMD Renoir).
-qr_fonts="LatArCyrHeb-19 LatArCyrHeb-16 LatArCyrHeb-14 Cyr_a8x16 UniCyr_8x16 Cyr_a8x14 UniCyr_8x14 Cyr_a8x8 UniCyr_8x8 LatArCyrHeb-08"
+# BIOS/Legacy: never drop to 8x8 — UTF8 half-block QR becomes unreadable on vesafb.
+qr_is_uefi() {
+    [ -d /sys/firmware/efi ]
+}
+
+if qr_is_uefi; then
+    qr_fonts="LatArCyrHeb-19 LatArCyrHeb-16 LatArCyrHeb-14 Cyr_a8x16 UniCyr_8x16 Cyr_a8x14 UniCyr_8x14 Cyr_a8x8 UniCyr_8x8 LatArCyrHeb-08"
+else
+    qr_fonts="LatArCyrHeb-16 LatArCyrHeb-14 Cyr_a8x16 UniCyr_8x16 Cyr_a8x14 UniCyr_8x14"
+fi
 qr_font_idx=-1
 QR_TERM_RESERVED=15
 qr_term_margin=1
@@ -424,9 +433,14 @@ build_qr_payload() {
         output="${output}|${base_output}"
     fi
 
-    qr_b64=$(printf '%s' "$output" | gzip -9c 2>/dev/null | base64 2>/dev/null | tr -d '\n')
+    # Prefer compressed wrapper whenever gzip/base64 work. Comparing string lengths
+    # wrongly fell back to raw on some payloads and produced huge unreadable terminal QR.
+    qr_b64=$(printf '%s' "$output" | gzip -9c 2>/dev/null | base64 -w 0 2>/dev/null)
+    if [ -z "$qr_b64" ]; then
+        qr_b64=$(printf '%s' "$output" | gzip -9c 2>/dev/null | base64 2>/dev/null | tr -d '\n')
+    fi
     qr_wrapped="V/1|Z/${qr_b64}"
-    if [ -n "$qr_b64" ] && [ "${#qr_wrapped}" -lt "${#output}" ]; then
+    if [ -n "$qr_b64" ]; then
         qr_payload="$qr_wrapped"
         qr_payload_mode="gzip+base64"
     else
@@ -576,41 +590,68 @@ done
 disk_count=$_disk_i
 build_qr_payload
 
+qr_out() {
+    _cols=$(stty size 2>/dev/null | awk '{ print $2 }')
+    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
+    if [ "$_cols" -lt 40 ]; then
+        _cols=40
+    fi
+    # fold keeps summary readable when Legacy console width is wrong/narrow.
+    if command -v fold >/dev/null 2>&1; then
+        printf '%s\n' "$1" | fold -s -w "$_cols"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 clear
-echo "--- Зібрані дані про залізо ---"
-echo "Заявка     : $ticket"
-echo "Скановано  : $scan_dt"
-echo "CPU        : $cpu ($cpu_ct ядер/потоків)"
-echo "ОЗП        : $ram"
+qr_out "--- Зібрані дані про залізо ---"
+qr_out "Заявка     : $ticket"
+qr_out "Скановано  : $scan_dt"
+qr_out "CPU        : $cpu ($cpu_ct ядер/потоків)"
+qr_out "ОЗП        : $ram"
 if [ -n "$ram_modules" ]; then
-    echo "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  Планка ОЗП  : /' | tr '/' ' '
+    echo "$ram_modules" | tr '|' '\n' | sed 's/^RM\//  Планка ОЗП  : /' | tr '/' ' ' | while IFS= read -r _line; do
+        qr_out "$_line"
+    done
 else
-    echo "  Планка ОЗП  : (недоступно)"
+    qr_out "  Планка ОЗП  : (недоступно)"
 fi
-echo "Система    : $sys_manufacturer $product_name (SN: $system_serial)"
-echo "Інв. №     : $asset_tag"
-echo "UUID       : $system_uuid"
-echo "Мат. плата : $mb_vendor_model (SN: $mb_serial)"
-echo "BIOS       : $bios ($bios_date)"
-echo "BIOS повн. : $bios_full"
-echo "TPM        : $tpm_status"
+qr_out "Система    : $sys_manufacturer $product_name (SN: $system_serial)"
+qr_out "Інв. №     : $asset_tag"
+qr_out "UUID       : $system_uuid"
+qr_out "Мат. плата : $mb_vendor_model (SN: $mb_serial)"
+qr_out "BIOS       : $bios ($bios_date)"
+qr_out "BIOS повн. : $bios_full"
+qr_out "TPM        : $tpm_status"
 if [ -n "$gpus" ]; then
-    printf '%s\n' "$gpus" | sed 's/^/  GPU        : /'
+    printf '%s\n' "$gpus" | sed 's/^/  GPU        : /' | while IFS= read -r _line; do
+        qr_out "$_line"
+    done
 else
-    echo "  GPU        : (не виявлено)"
+    qr_out "  GPU        : (не виявлено)"
 fi
 if [ "$battery_count" -gt 0 ]; then
-    echo "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Батарея    : /' | tr '/' ' '
+    echo "$output" | tr '|' '\n' | grep '^BAT/' | sed 's/^BAT\//  Батарея    : /' | tr '/' ' ' | while IFS= read -r _line; do
+        qr_out "$_line"
+    done
 else
-    echo "  Батарея    : (немає)"
+    qr_out "  Батарея    : (немає)"
 fi
 if [ "$disk_count" -gt 0 ]; then
-    echo "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Диск       : /' | tr '/' ' '
+    echo "$output" | tr '|' '\n' | grep '^D/' | sed 's/^D\//  Диск       : /' | tr '/' ' ' | while IFS= read -r _line; do
+        qr_out "$_line"
+    done
 else
-    echo "  Диск       : (немає)"
+    qr_out "  Диск       : (немає)"
 fi
-echo "Схема QR   : v1 (сегменти TAG/поле/... через |)"
-echo "-------------------------------"
+qr_out "Схема QR   : v1 (сегменти TAG/поле/... через |)"
+if qr_is_uefi; then
+    qr_out "Завантаження: UEFI"
+else
+    qr_out "Завантаження: Legacy BIOS (краще UEFI, якщо доступно)"
+fi
+qr_out "-------------------------------"
 echo ""
 
 echo "Натисніть Enter для генерації QR-коду..."
@@ -820,6 +861,11 @@ qr_cycle_resolution() {
 }
 
 qr_prefer_safe_mode() {
+    # On Legacy BIOS, forcing 1024x768 via fbset/sysfs often yields broken vesafb
+    # pitch (skewed QR). Keep native KMS mode there; only shrink on UEFI/efifb.
+    if ! qr_is_uefi; then
+        return 0
+    fi
     set -- $(qr_fb_size)
     _fh=$2
     case "$_fh" in ''|*[!0-9]*) return 0 ;; esac
@@ -910,14 +956,29 @@ qr_utf8_metrics() {
     _data="$1"
     _margin="${2:-$qr_term_margin}"
     _tmp="/tmp/hwqr_utf8.txt"
-    if ! printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null; then
-        if ! printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null; then
-            echo "0 0"
-            return 1
+    # Measure the same renderer we will display (Legacy prefers ANSIUTF8).
+    if qr_is_uefi; then
+        _ok=1
+        printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || _ok=0
+        if [ "$_ok" -eq 0 ]; then
+            printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || {
+                echo "0 0"
+                return 1
+            }
+        fi
+    else
+        _ok=1
+        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || _ok=0
+        if [ "$_ok" -eq 0 ]; then
+            printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || {
+                echo "0 0"
+                return 1
+            }
         fi
     fi
     _ql=$(wc -l < "$_tmp" | tr -d ' ')
-    _qw=$(awk '{ if (length > m) m = length } END { print m+0 }' "$_tmp")
+    # Strip ANSI escapes when measuring width of ANSIUTF8 output.
+    _qw=$(sed 's/\x1b\[[0-9;]*m//g' "$_tmp" | awk '{ if (length > m) m = length } END { print m+0 }')
     case "$_ql" in ''|*[!0-9]*) _ql=0 ;; esac
     case "$_qw" in ''|*[!0-9]*) _qw=0 ;; esac
     echo "$_ql $_qw"
@@ -1131,6 +1192,11 @@ qr_show_terminal() {
     clear
     echo "Заявка: $ticket"
     echo "Екран      : ${_fbw}x${_fbh}  консоль ${_cols}x${_lines}  (V: роздільність)"
+    if qr_is_uefi; then
+        echo "Режим      : UEFI"
+    else
+        echo "Режим      : Legacy BIOS"
+    fi
     if [ "$qr_font_idx" -lt 0 ]; then
         echo "Масштаб QR  : авто-шрифт (${_font_lbl})  (=/-)"
     else
@@ -1152,8 +1218,15 @@ qr_show_terminal() {
     if [ "$_inverted" = "1" ]; then
         printf '\033[7m'
     fi
-    printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
-        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin"
+    # On Legacy, ANSIUTF8 (full blocks) is often more stable than UTF8 half-blocks
+    # when vesafb/glyph rendering skews the matrix.
+    if qr_is_uefi; then
+        printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
+            printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin"
+    else
+        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
+            printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin"
+    fi
     if [ "$_inverted" = "1" ]; then
         printf '\033[0m'
     fi
