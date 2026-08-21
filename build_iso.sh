@@ -88,8 +88,10 @@ sort -u /profile/packages.x86_64 /src/arch-config/qr/packages.extra > /tmp/packa
 mv /tmp/packages.merged /profile/packages.x86_64
 cp -a /src/arch-config/qr/airootfs/. /profile/airootfs/
 install -Dm755 /src/scripts/hardware_qr.sh /profile/airootfs/usr/local/bin/hardware_qr.sh
+install -Dm755 /src/scripts/qr_fb_blit.py /profile/airootfs/usr/local/bin/qr_fb_blit.py
 cp /src/arch-config/qr/customize_airootfs.sh /profile/customize_airootfs.sh
 chmod 755 /profile/customize_airootfs.sh
+chmod 755 /profile/airootfs/usr/local/bin/qr_fb_blit.py
 
 # UEFI only: nomodeset+fixed mode keeps QR readable on Renoir/HiDPI (efifb).
 # Do NOT add these to syslinux/BIOS — on Legacy they force broken vesafb

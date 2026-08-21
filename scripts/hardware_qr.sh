@@ -694,9 +694,14 @@ qr_fb_max_px() {
     _fbw=$1
     _fbh=$2
     _min=$((_fbw < _fbh ? _fbw : _fbh))
-    # Conservative fit: leave headroom so fbi/center never clips on HiDPI panels.
-    _max=$((_min * 65 / 100))
-    _floor=$((_min - 160))
+    # Legacy direct/fbi path: fill most of the panel. UEFI keeps more headroom.
+    if qr_is_uefi; then
+        _max=$((_min * 65 / 100))
+        _floor=$((_min - 160))
+    else
+        _max=$((_min * 90 / 100))
+        _floor=$((_min - 40))
+    fi
     if [ "$_max" -gt "$_floor" ]; then
         _max=$_floor
     fi
@@ -956,7 +961,7 @@ qr_utf8_metrics() {
     _data="$1"
     _margin="${2:-$qr_term_margin}"
     _tmp="/tmp/hwqr_utf8.txt"
-    # Measure the same renderer we will display (Legacy prefers ANSIUTF8).
+    # Measure the same renderer we will display.
     if qr_is_uefi; then
         _ok=1
         printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || _ok=0
@@ -968,16 +973,16 @@ qr_utf8_metrics() {
         fi
     else
         _ok=1
-        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || _ok=0
+        printf '%s' "$_data" | qrencode -t ASCIIi -l L -m 0 > "$_tmp" 2>/dev/null || _ok=0
         if [ "$_ok" -eq 0 ]; then
-            printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$_margin" > "$_tmp" 2>/dev/null || {
+            printf '%s' "$_data" | qrencode -t ASCII -l L -m 0 > "$_tmp" 2>/dev/null || {
                 echo "0 0"
                 return 1
             }
         fi
     fi
     _ql=$(wc -l < "$_tmp" | tr -d ' ')
-    # Strip ANSI escapes when measuring width of ANSIUTF8 output.
+    # Strip ANSI escapes when measuring width of colorized output.
     _qw=$(sed 's/\x1b\[[0-9;]*m//g' "$_tmp" | awk '{ if (length > m) m = length } END { print m+0 }')
     case "$_ql" in ''|*[!0-9]*) _ql=0 ;; esac
     case "$_qw" in ''|*[!0-9]*) _qw=0 ;; esac
@@ -1092,6 +1097,37 @@ qr_edit_ticket() {
     build_qr_payload
 }
 
+qr_fbcon_unbind() {
+    for _b in /sys/class/vtconsole/vtcon*/bind; do
+        [ -w "$_b" ] || continue
+        printf '0\n' > "$_b" 2>/dev/null || true
+    done
+}
+
+qr_fbcon_bind() {
+    for _b in /sys/class/vtconsole/vtcon*/bind; do
+        [ -w "$_b" ] || continue
+        printf '1\n' > "$_b" 2>/dev/null || true
+    done
+}
+
+qr_find_blit() {
+    if [ -x /usr/local/bin/qr_fb_blit.py ]; then
+        echo /usr/local/bin/qr_fb_blit.py
+        return 0
+    fi
+    if [ -f /usr/local/bin/qr_fb_blit.py ]; then
+        echo /usr/local/bin/qr_fb_blit.py
+        return 0
+    fi
+    _self_dir=$(CDPATH= cd -- "$(dirname "$0")" 2>/dev/null && pwd)
+    if [ -n "$_self_dir" ] && [ -f "$_self_dir/qr_fb_blit.py" ]; then
+        echo "$_self_dir/qr_fb_blit.py"
+        return 0
+    fi
+    return 1
+}
+
 qr_current_font_name() {
     set -- $qr_fonts
     _i=0
@@ -1132,6 +1168,11 @@ qr_show_framebuffer() {
     clear
     echo "Заявка: $ticket"
     echo "Екран      : ${_fbw}x${_fbh}  (V: змінити роздільність)"
+    if qr_is_uefi; then
+        echo "Режим      : UEFI / fbi"
+    else
+        echo "Режим      : Legacy BIOS / fbi"
+    fi
     if [ "$qr_scale" -le 0 ]; then
         echo "Масштаб QR  : ${_best} модулів (авто, макс. ${qr_scale_max})  (=/-)"
     else
@@ -1158,7 +1199,6 @@ qr_show_framebuffer() {
     _fbi_pid=$!
     sleep 0.3
     if ! kill -0 "$_fbi_pid" 2>/dev/null; then
-        # Retry without explicit device
         fbi -T "$_tty_num" -a -noverbose "$_png" >/tmp/hwqr_fbi.err 2>&1 &
         _fbi_pid=$!
         sleep 0.3
@@ -1172,6 +1212,73 @@ qr_show_framebuffer() {
     kill "$_fbi_pid" 2>/dev/null
     wait "$_fbi_pid" 2>/dev/null
     killall fbi 2>/dev/null
+    return 0
+}
+
+# Direct /dev/fb0 blit (Legacy-safe): no Unicode glyphs, fills ~92% of screen.
+qr_show_fb_direct() {
+    _data="$1"
+    _inverted="$2"
+
+    if [ ! -c /dev/fb0 ]; then
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
+        return 1
+    fi
+    _blit=$(qr_find_blit) || return 1
+    _py=python3
+    command -v python3 >/dev/null 2>&1 || _py=python
+
+    set -- $(qr_fb_size)
+    _fbw=$1
+    _fbh=$2
+
+    clear
+    echo "Заявка: $ticket"
+    echo "Екран      : ${_fbw}x${_fbh}"
+    echo "Режим      : Legacy BIOS / framebuffer"
+    case "$qr_payload_mode" in
+        gzip+base64) _payload_lbl="стиснуто" ;;
+        raw) _payload_lbl="без стиснення" ;;
+        *) _payload_lbl="$qr_payload_mode" ;;
+    esac
+    echo "Формат QR   : ${_payload_lbl}"
+    echo "Скануйте QR на екрані."
+    echo "=/- масштаб | V роздільність | Tab інверсія | Enter reboot"
+    sleep 1
+
+    _fill="0.92"
+    if [ "$qr_scale" -gt 0 ]; then
+        # Map manual module scale 1..max onto fill 0.45..0.98
+        _fill=$(awk -v s="$qr_scale" -v m="$qr_scale_max" 'BEGIN {
+            if (m < 1) m = 1
+            f = 0.45 + (0.53 * s / m)
+            if (f > 0.98) f = 0.98
+            if (f < 0.40) f = 0.40
+            printf "%.2f", f
+        }')
+    fi
+
+    qr_fbcon_unbind
+    if [ "$_inverted" = "1" ]; then
+        _blit_rc=0
+        "$_py" "$_blit" --inverted --fill "$_fill" --margin 2 "$_data" \
+            >/tmp/hwqr_blit.err 2>&1 || _blit_rc=$?
+    else
+        _blit_rc=0
+        "$_py" "$_blit" --fill "$_fill" --margin 2 "$_data" \
+            >/tmp/hwqr_blit.err 2>&1 || _blit_rc=$?
+    fi
+    if [ "$_blit_rc" -ne 0 ]; then
+        qr_fbcon_bind
+        return 1
+    fi
+
+    qr_display_mode="fb_direct"
+    qr_wait_action
+    qr_fbcon_bind
+    clear
     return 0
 }
 
@@ -1193,9 +1300,9 @@ qr_show_terminal() {
     echo "Заявка: $ticket"
     echo "Екран      : ${_fbw}x${_fbh}  консоль ${_cols}x${_lines}  (V: роздільність)"
     if qr_is_uefi; then
-        echo "Режим      : UEFI"
+        echo "Режим      : UEFI / термінал"
     else
-        echo "Режим      : Legacy BIOS"
+        echo "Режим      : Legacy BIOS / ASCII (краще UEFI)"
     fi
     if [ "$qr_font_idx" -lt 0 ]; then
         echo "Масштаб QR  : авто-шрифт (${_font_lbl})  (=/-)"
@@ -1218,14 +1325,13 @@ qr_show_terminal() {
     if [ "$_inverted" = "1" ]; then
         printf '\033[7m'
     fi
-    # On Legacy, ANSIUTF8 (full blocks) is often more stable than UTF8 half-blocks
-    # when vesafb/glyph rendering skews the matrix.
+    # Legacy: ASCII only — UTF8/ANSIUTF8 half-blocks tear on vesafb/BIOS fonts.
     if qr_is_uefi; then
         printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
             printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin"
     else
-        printf '%s' "$_data" | qrencode -t ANSIUTF8 -l L -m "$qr_term_margin" 2>/dev/null || \
-            printf '%s' "$_data" | qrencode -t UTF8 -l L -m "$qr_term_margin"
+        printf '%s' "$_data" | qrencode -t ASCIIi -l L -m 0 2>/dev/null || \
+            printf '%s' "$_data" | qrencode -t ASCII -l L -m 0
     fi
     if [ "$_inverted" = "1" ]; then
         printf '\033[0m'
@@ -1239,13 +1345,21 @@ qr_inverted=0
 qr_init_display_modes
 qr_prefer_safe_mode
 while :; do
-    if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
-        qr_show_terminal "$qr_payload" "$qr_inverted"
+    if qr_is_uefi; then
+        if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
+            qr_show_terminal "$qr_payload" "$qr_inverted"
+        fi
+    else
+        # Legacy: fbi → direct fb blit → ASCII terminal (never Unicode blocks).
+        if ! qr_show_framebuffer "$qr_payload" "$qr_inverted"; then
+            if ! qr_show_fb_direct "$qr_payload" "$qr_inverted"; then
+                qr_show_terminal "$qr_payload" "$qr_inverted"
+            fi
+        fi
     fi
 
     case "$qr_action" in
         scale_up)
-            # fb: larger modules; term: larger font (smaller font index)
             qr_scale_adjust 1 "$qr_payload" "$qr_inverted"
             qr_font_scale_adjust -1
             ;;

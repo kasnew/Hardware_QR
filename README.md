@@ -47,7 +47,7 @@ ISO_BUILD_STAMP=2026.07.09-120000 ./build_iso.sh
 
 Live ISO: `uk_UA.UTF-8`, шрифт `LatArCyrHeb-16`, розкладка `ua`, автозапуск на `tty1`.
 UEFI: `nomodeset video=1024x768@60` (стабільний QR на AMD Renoir / HiDPI).
-Legacy BIOS: без цих параметрів (інакше vesafb «ламає» QR); за можливості ставте UEFI.
+Legacy BIOS: без цих параметрів; QR малюється в framebuffer (`fbi` або `qr_fb_blit.py` ~92% екрана). За можливості ставте UEFI.
 
 ## Windows
 
